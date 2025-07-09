@@ -7,7 +7,6 @@ import re
 import time
 from io import BytesIO
 from PIL import Image
-from urllib.parse import quote
 from oauth2client.service_account import ServiceAccountCredentials
 
 # === 1. Write Google service key to creds.json ===
@@ -17,10 +16,7 @@ with open("creds.json", "w") as f:
 print("🔐 Wrote creds.json from secret")
 
 # === 2. Set up Google Sheets ===
-scope = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive"
-]
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name("creds.json", scope)
 gc = gspread.authorize(creds)
 print("📗 Connected to Google Sheets")
@@ -32,17 +28,12 @@ upload_sheet = spreadsheet.worksheet("Upload")
 content_sheet = spreadsheet.worksheet("Content")
 print("📄 Loaded 'Upload' and 'Content' sheets")
 
-# === 4. Login to Fandom using mwclient ===
+# === 4. Login to Fandom ===
 USERNAME = os.getenv("USER")
 PASSWORD = os.getenv("PASSWORD")
 site = mwclient.Site('gacha-designer.fandom.com', path='/')
 site.login(USERNAME, PASSWORD)
 print(f"✅ Logged in as {USERNAME}")
-
-# Get API token and cookies
-edit_token = site.get_token('csrf')
-cookies = site.connection.cookies.get_dict()
-print("📎 Retrieved CSRF token and cookies for Fandom")
 
 # === 5. Load sheet data ===
 upload_records = upload_sheet.get_all_records(expected_headers=[
@@ -117,7 +108,7 @@ for i, row in enumerate(upload_records):
         upload_sheet.update_cell(row_index, 8, reason)
         continue
 
-    # === Build image description ===
+    # === Build description and caption ===
     description = f"Made by {designer}"
     if layers.strip():
         layer_links = [link.strip() for link in layers.split(",") if link.strip()]
@@ -126,55 +117,17 @@ for i, row in enumerate(upload_records):
             for i, link in enumerate(layer_links[:5], 1):
                 description += f"\n[{i}]({link})"
 
-    # === Upload image ===
-    print(f"⬆️ Uploading {filename} to Fandom...")
+    # === Upload image via site.upload() ===
+    print(f"⬆️ Uploading {filename} via site.upload...")
     try:
-        with open(local_path, 'rb') as f:
-            files = {
-                'file': (filename, f, 'image/png'),
-            }
-            data = {
-                'action': 'upload',
-                'filename': filename,
-                'format': 'json',
-                'token': edit_token,
-                'comment': description,
-                'ignorewarnings': '1' if ignore_warnings else '0',
-            }
-            headers = {
-                'User-Agent': 'RenderUploaderBot/1.0',
-                'Connection': 'keep-alive'
-            }
-
-            try:
-                response = requests.post(
-                    'https://gacha-designer.fandom.com/api.php',
-                    data=data,
-                    files=files,
-                    headers=headers,
-                    cookies=cookies,
-                    timeout=60
-                )
-                response.raise_for_status()
-            except requests.exceptions.ConnectionError:
-                print("⚠️ Connection dropped — retrying in 5 seconds...")
-                time.sleep(5)
-                response = requests.post(
-                    'https://gacha-designer.fandom.com/api.php',
-                    data=data,
-                    files=files,
-                    headers=headers,
-                    cookies=cookies,
-                    timeout=60
-                )
-                response.raise_for_status()
-                print(f"✅ Retry worked for {filename}")
-
-            result = response.json()
-            if "error" in result:
-                raise Exception(result["error"].get("info", "Unknown upload error"))
-            print(f"✅ Successfully uploaded {filename}")
-
+        with open(local_path, "rb") as file:
+            site.upload(
+                filename=filename,
+                file=file,
+                description=description,
+                ignore=ignore_warnings
+            )
+        print(f"✅ Uploaded {filename} using mwclient.upload")
     except Exception as e:
         reason = f"Upload error: {e}"
         print(f"❌ {reason}")
