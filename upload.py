@@ -46,8 +46,7 @@ print("📎 Retrieved CSRF token and cookies for Fandom")
 
 # === 5. Load sheet data ===
 upload_records = upload_sheet.get_all_records(expected_headers=[
-    "Image", "Page", "Type", "Number", "Asset Designer", "Layers", "Process",
-    "Reason"
+    "Image", "Page", "Type", "Number", "Asset Designer", "Layers", "Process", "Reason"
 ])
 content_records = content_sheet.get_all_records()
 type_map = {
@@ -90,14 +89,27 @@ for i, row in enumerate(upload_records):
         print(f"🌐 Downloading: {image_url}")
         res = requests.get(image_url)
         res.raise_for_status()
+        print(f"📦 Original image size: {len(res.content) // 1024} KB")
         img = Image.open(BytesIO(res.content)).convert("RGBA")
         img.thumbnail((1024, 1024))
 
         buffer = BytesIO()
         img.save(buffer, format="PNG")
+
+        size_limit = 500 * 1024
+        scale = 1.0
+        while buffer.tell() > size_limit and scale > 0.2:
+            scale -= 0.1
+            width, height = img.size
+            img = img.resize((int(width * scale), int(height * scale)), Image.LANCZOS)
+            buffer = BytesIO()
+            img.save(buffer, format="PNG")
+            print(f"🔧 Compressed to {img.size}, now {buffer.tell() // 1024} KB")
+
         with open(local_path, "wb") as f:
             f.write(buffer.getvalue())
-        print(f"✅ Image processed and saved locally as {local_path}")
+        print(f"✅ Final image saved: {buffer.tell() // 1024} KB")
+
     except Exception as e:
         reason = f"Image error: {e}"
         print(f"❌ {reason}")
@@ -131,10 +143,9 @@ for i, row in enumerate(upload_records):
             }
             headers = {
                 'User-Agent': 'RenderUploaderBot/1.0',
-                'Connection': 'keep-alive'  # ✅ Fix 3
+                'Connection': 'keep-alive'
             }
 
-            # ✅ Fix 1: try upload and retry once on connection error
             try:
                 response = requests.post(
                     'https://gacha-designer.fandom.com/api.php',
@@ -145,22 +156,19 @@ for i, row in enumerate(upload_records):
                     timeout=60
                 )
                 response.raise_for_status()
-            except requests.exceptions.ConnectionError as ce:
+            except requests.exceptions.ConnectionError:
                 print("⚠️ Connection dropped — retrying in 5 seconds...")
                 time.sleep(5)
-                try:
-                    response = requests.post(
-                        'https://gacha-designer.fandom.com/api.php',
-                        data=data,
-                        files=files,
-                        headers=headers,
-                        cookies=cookies,
-                        timeout=60
-                    )
-                    response.raise_for_status()
-                    print(f"✅ Retry worked for {filename}")
-                except Exception as retry_error:
-                    raise retry_error
+                response = requests.post(
+                    'https://gacha-designer.fandom.com/api.php',
+                    data=data,
+                    files=files,
+                    headers=headers,
+                    cookies=cookies,
+                    timeout=60
+                )
+                response.raise_for_status()
+                print(f"✅ Retry worked for {filename}")
 
             result = response.json()
             if "error" in result:
@@ -180,13 +188,11 @@ for i, row in enumerate(upload_records):
         page = site.pages[page_name]
         text = page.text()
         caption = description
-        section_match = re.search(rf"(==+\s*{re.escape(asset_type)}\s*==+)",
-                                  text, re.IGNORECASE)
+        section_match = re.search(rf"(==+\s*{re.escape(asset_type)}\s*==+)", text, re.IGNORECASE)
         if not section_match:
             raise Exception(f"Missing =={asset_type}== heading")
         section_start = section_match.end()
-        gallery_match = re.search(r"<gallery>(.*?)</gallery>",
-                                  text[section_start:], re.DOTALL)
+        gallery_match = re.search(r"<gallery>(.*?)</gallery>", text[section_start:], re.DOTALL)
         if not gallery_match:
             raise Exception("No <gallery> found under heading")
 
@@ -209,6 +215,7 @@ for i, row in enumerate(upload_records):
                 print(f"🔢 Incremented {asset_type} number to {new_num}")
                 break
         time.sleep(2)
+
     except Exception as e:
         reason = f"Gallery error: {e}"
         print(f"❌ {reason}")
