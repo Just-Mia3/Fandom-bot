@@ -95,11 +95,6 @@ for i, row in enumerate(upload_records):
 
         buffer = BytesIO()
         img.save(buffer, format="PNG")
-        while buffer.tell() > 1 * 1024 * 1024:
-            buffer = BytesIO()
-            width, height = img.size
-            img = img.resize((int(width * 0.9), int(height * 0.9)), Image.LANCZOS)
-            img.save(buffer, format="PNG")
         with open(local_path, "wb") as f:
             f.write(buffer.getvalue())
         print(f"✅ Image processed and saved locally as {local_path}")
@@ -134,19 +129,44 @@ for i, row in enumerate(upload_records):
                 'comment': description,
                 'ignorewarnings': '1' if ignore_warnings else '0',
             }
-            headers = {'User-Agent': 'RenderUploaderBot/1.0'}
-            response = requests.post(
-                'https://gacha-designer.fandom.com/api.php',
-                data=data,
-                files=files,
-                headers=headers,
-                cookies=cookies,
-                timeout=60)
-        response.raise_for_status()
-        result = response.json()
-        if "error" in result:
-            raise Exception(result["error"].get("info", "Unknown upload error"))
-        print(f"✅ Successfully uploaded {filename}")
+            headers = {
+                'User-Agent': 'RenderUploaderBot/1.0',
+                'Connection': 'keep-alive'  # ✅ Fix 3
+            }
+
+            # ✅ Fix 1: try upload and retry once on connection error
+            try:
+                response = requests.post(
+                    'https://gacha-designer.fandom.com/api.php',
+                    data=data,
+                    files=files,
+                    headers=headers,
+                    cookies=cookies,
+                    timeout=60
+                )
+                response.raise_for_status()
+            except requests.exceptions.ConnectionError as ce:
+                print("⚠️ Connection dropped — retrying in 5 seconds...")
+                time.sleep(5)
+                try:
+                    response = requests.post(
+                        'https://gacha-designer.fandom.com/api.php',
+                        data=data,
+                        files=files,
+                        headers=headers,
+                        cookies=cookies,
+                        timeout=60
+                    )
+                    response.raise_for_status()
+                    print(f"✅ Retry worked for {filename}")
+                except Exception as retry_error:
+                    raise retry_error
+
+            result = response.json()
+            if "error" in result:
+                raise Exception(result["error"].get("info", "Unknown upload error"))
+            print(f"✅ Successfully uploaded {filename}")
+
     except Exception as e:
         reason = f"Upload error: {e}"
         print(f"❌ {reason}")
