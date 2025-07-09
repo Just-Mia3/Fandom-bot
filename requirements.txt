@@ -1,0 +1,5 @@
+requests
+gspread
+oauth2client
+pillow
+mwclient
